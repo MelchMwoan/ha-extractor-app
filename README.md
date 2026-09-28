@@ -1,5 +1,7 @@
 # Home Assistant Dashboard Extractor
 
+This repository contains the `ha_extractor` Home Assistant app.
+
 A Home Assistant app that allows you to record your Home Assistant dashboards as animated webp or mp4 files. Useful when the HA framework is too heavy to load on your old devices, or if you want to use the extracted dashboard as a screensaver on your TV.
 
 ## Installation

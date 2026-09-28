@@ -20,6 +20,6 @@ jobs:
   build:
     uses: ./.github/workflows/build-app.yaml
     with:
-      app: "."
+      app: "ha_extractor"
       publish: ${{ github.event_name == 'push' || inputs.publish == true }}
     secrets: inherit
