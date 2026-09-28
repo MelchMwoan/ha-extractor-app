@@ -23,6 +23,12 @@ configuration:
   delay_after_loaded:
     name: Vertraging na laden van HA
     description: Extra vertraging in seconden nadat Home Assistant geladen is, zodat het laadscherm kan verdwijnen.
+  retain_profile:
+    name: Chromium-profiel behouden
+    description: Bewaar Chromium-cache, cookies, lokale opslag en service-workergegevens tussen opnames.
+  profile_cache_clear_interval:
+    name: Interval voor wissen van profielcache
+    description: Wis de HTTP-cache van Chromium na dit aantal minuten. Stel in op 0 om automatisch wissen uit te schakelen.
   cron:
     name: Cron
     description: Cron expression om de vastlegging in te plannen.

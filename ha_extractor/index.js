@@ -77,9 +77,11 @@ const config = {
   durationMs: positiveNumber(value('duration', 'CAPTURE_DURATION_SECONDS', 30), 'duration', { integer: true }) * 1000,
   waitUntilLoaded: booleanValue(value('wait_until_loaded', 'WAIT_UNTIL_LOADED', true), 'wait_until_loaded'),
   delayAfterLoadedMs: nonNegativeNumber(value('delay_after_loaded', 'DELAY_AFTER_LOADED_SECONDS', 2), 'delay_after_loaded', { integer: true }) * 1000,
+  retainProfile: booleanValue(value('retain_profile', 'RETAIN_PROFILE', false), 'retain_profile'),
+  profileCacheClearIntervalMs: nonNegativeNumber(value('profile_cache_clear_interval', 'PROFILE_CACHE_CLEAR_INTERVAL_MINUTES', 15), 'profile_cache_clear_interval', { integer: true }) * 60 * 1000,
   cronSchedule: String(value('cron', 'CRON_SCHEDULE', '*/30 * * * *')),
   outputType: String(value('output_type', 'OUTPUT_TYPE', 'mp4')).toLowerCase(),
-  framerate: positiveNumber(value('framerate', 'FRAMERATE', 30), 'framerate', { integer: true }),
+  framerate: positiveNumber(value('framerate', 'FRAMERATE', 25), 'framerate', { integer: true }),
   outputPathBase: String(value('output_path', 'OUTPUT_PATH', '/config/www/ha-extractor/output')),
 };
 
@@ -97,6 +99,9 @@ let encodeQueue = Promise.resolve();
 let stopping = false;
 let scheduledTask;
 let sharedBrowser;
+let sharedPersistentContext;
+let profileCacheLastClearedAt = 0;
+const profileDir = path.resolve(process.env.CHROMIUM_PROFILE_DIR || '/data/chromium-profile');
 
 async function ensurePlayerPage(finalOutputPath) {
   const playerPath = path.join(path.dirname(finalOutputPath), 'index.html');
@@ -138,6 +143,59 @@ async function closeSharedBrowser() {
   const browser = sharedBrowser;
   sharedBrowser = undefined;
   if (browser) await browser.close().catch((error) => log.warn(`Could not close Chromium cleanly: ${error.message}`));
+
+  const persistentContext = sharedPersistentContext;
+  sharedPersistentContext = undefined;
+  if (persistentContext) await persistentContext.close().catch((error) => log.warn(`Could not close retained profile cleanly: ${error.message}`));
+}
+
+async function addAuthScript(context) {
+  if (!config.token) return;
+  const hassUrl = new URL(config.url).origin;
+  await context.addInitScript(({ token, hassUrl: origin }) => {
+    window.localStorage.setItem('hassTokens', JSON.stringify({
+      access_token: token, expires_in: 315360000, refresh_token: '', token_type: 'Bearer',
+      clientId: origin, hassUrl: origin,
+    }));
+  }, { token: config.token, hassUrl });
+}
+
+async function getCaptureContext() {
+  if (config.retainProfile) {
+    if (!sharedPersistentContext) {
+      await fsp.mkdir(profileDir, { recursive: true });
+      log.info(`Launching persistent Chromium profile at ${profileDir}`);
+      sharedPersistentContext = await chromium.launchPersistentContext(profileDir, {
+        headless: true,
+        executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+        args: ['--no-sandbox', '--disable-dev-shm-usage'],
+        viewport: { width: config.width, height: config.height },
+        recordVideo: { dir: tempDir, size: { width: config.width, height: config.height } },
+      });
+      await addAuthScript(sharedPersistentContext);
+      profileCacheLastClearedAt = Date.now();
+    }
+    return sharedPersistentContext;
+  }
+
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    viewport: { width: config.width, height: config.height },
+    recordVideo: { dir: tempDir, size: { width: config.width, height: config.height } },
+  });
+  await addAuthScript(context);
+  return context;
+}
+
+async function clearProfileCacheIfDue(context, page) {
+  if (!config.retainProfile || config.profileCacheClearIntervalMs <= 0) return;
+  if (Date.now() - profileCacheLastClearedAt < config.profileCacheClearIntervalMs) return;
+
+  const client = await context.newCDPSession(page);
+  await client.send('Network.clearBrowserCache');
+  await client.detach();
+  profileCacheLastClearedAt = Date.now();
+  log.info('Cleared retained Chromium HTTP cache');
 }
 
 async function captureDashboard() {
@@ -149,6 +207,7 @@ async function captureDashboard() {
   captureRunning = true;
   const captureId = ++captureSequence;
   let context;
+  let page;
   let videoPath;
   const extension = config.outputType === 'mp4' ? '.mp4' : '.webp';
   const finalOutputPath = `${config.outputPathBase}${extension}`;
@@ -159,23 +218,10 @@ async function captureDashboard() {
     await ensurePlayerPage(finalOutputPath);
     log.info(`Starting capture #${captureId}`);
 
-    const browser = await getBrowser();
-    context = await browser.newContext({
-      viewport: { width: config.width, height: config.height },
-      recordVideo: { dir: tempDir, size: { width: config.width, height: config.height } },
-    });
+    context = await getCaptureContext();
 
-    if (config.token) {
-      const hassUrl = new URL(config.url).origin;
-      await context.addInitScript(({ token, hassUrl: origin }) => {
-        window.localStorage.setItem('hassTokens', JSON.stringify({
-          access_token: token, expires_in: 315360000, refresh_token: '', token_type: 'Bearer',
-          clientId: origin, hassUrl: origin,
-        }));
-      }, { token: config.token, hassUrl });
-    }
-
-    const page = await context.newPage();
+    page = await context.newPage();
+    await clearProfileCacheIfDue(context, page);
     log.info(`Navigating to ${config.url}`);
     await page.goto(config.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     if (config.waitUntilLoaded) {
@@ -197,9 +243,10 @@ async function captureDashboard() {
     log.info(`Recording capture #${captureId} for ${config.durationMs / 1000} seconds`);
     await page.waitForTimeout(config.durationMs);
 
-    await context.close();
+    if (config.retainProfile) await page.close();
+    else await context.close();
     videoPath = await page.video().path();
-    context = undefined;
+    if (!config.retainProfile) context = undefined;
 
     const completedVideoPath = videoPath;
     videoPath = undefined;
@@ -208,7 +255,8 @@ async function captureDashboard() {
   } catch (error) {
     log.err(`Capture #${captureId} failed: ${error.message}`);
   } finally {
-    if (context) await context.close().catch(() => { });
+    if (page && !page.isClosed()) await page.close().catch(() => { });
+    if (context && context !== sharedPersistentContext) await context.close().catch(() => { });
     if (videoPath) await fsp.rm(videoPath, { force: true }).catch(() => { });
     captureRunning = false;
   }
@@ -241,8 +289,8 @@ function transcodeVideo(inputPath, outputPath) {
   const durationSeconds = String(config.durationMs / 1000);
   const input = ['-sseof', `-${durationSeconds}`, '-i', inputPath, '-t', durationSeconds];
   const args = config.outputType === 'mp4'
-    ? ['-y', ...input, '-vf', filters, '-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', outputPath]
-    : ['-y', ...input, '-vf', filters, '-c:v', 'libwebp', '-threads', '0', '-lossless', '0', '-compression_level', '0', '-q:v', '50', '-loop', '0', '-an', outputPath];
+    ? ['-y', ...input, '-vf', filters, '-c:v', 'libx264', '-threads', '2', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', outputPath]
+    : ['-y', ...input, '-vf', filters, '-c:v', 'libwebp', '-threads', '2', '-lossless', '0', '-compression_level', '0', '-q:v', '50', '-loop', '0', '-an', outputPath];
 
   return new Promise((resolve, reject) => {
     const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -267,7 +315,7 @@ process.once('SIGTERM', () => void shutdown('SIGTERM'));
 process.once('SIGINT', () => void shutdown('SIGINT'));
 
 log.info('HA Extractor started');
-log.info(`Settings: ${config.width}x${config.height}, zoom=${config.zoom}, duration=${config.durationMs / 1000}s, waitUntilLoaded=${config.waitUntilLoaded}, delayAfterLoaded=${config.delayAfterLoadedMs / 1000}s, ${config.framerate}fps ${config.outputType}`);
+log.info(`Settings: ${config.width}x${config.height}, zoom=${config.zoom}, duration=${config.durationMs / 1000}s, waitUntilLoaded=${config.waitUntilLoaded}, delayAfterLoaded=${config.delayAfterLoadedMs / 1000}s, retainProfile=${config.retainProfile}, profileCacheClearInterval=${config.profileCacheClearIntervalMs / 60000}m, ${config.framerate}fps ${config.outputType}`);
 log.info(`Settings: url=${config.url}, output=${config.outputPathBase}${config.outputType === 'mp4' ? '.mp4' : '.webp'}, schedule=${config.cronSchedule}`);
 
 void captureDashboard();

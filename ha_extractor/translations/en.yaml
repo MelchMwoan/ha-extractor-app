@@ -23,6 +23,12 @@ configuration:
   delay_after_loaded:
     name: Delay after HA loaded
     description: Additional delay in seconds after Home Assistant loads, allowing the dashboard splash screen to disappear.
+  retain_profile:
+    name: Retain Chromium profile
+    description: Keep Chromium cache, cookies, local storage, and service-worker data between captures.
+  profile_cache_clear_interval:
+    name: Profile cache clear interval
+    description: Clear Chromium's HTTP cache after this many minutes. Set to 0 to disable automatic clearing.
   cron:
     name: Cron
     description: Cron expression to schedule the capture.

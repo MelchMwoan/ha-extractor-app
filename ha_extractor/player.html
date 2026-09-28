@@ -32,63 +32,81 @@
   <img id="image" alt="Home Assistant dashboard" hidden>
 
   <script>
-    const outputType = __OUTPUT_TYPE__;
-    const sourceName = __SOURCE_NAME__;
-    const versionName = __VERSION_NAME__;
-    let media = document.getElementById(outputType === 'mp4' ? 'video' : 'image');
-    let currentVersion = null;
-    let loadingVersion = null;
+    var outputType = __OUTPUT_TYPE__;
+    var sourceName = __SOURCE_NAME__;
+    var versionName = __VERSION_NAME__;
+    var media = document.getElementById(outputType === 'mp4' ? 'video' : 'image');
+    var currentVersion = null;
+    var loadingVersion = null;
 
     media.hidden = false;
+    media.style.display = '';
 
     function preloadMedia(version) {
-      const source = './' + sourceName + '?v=' + encodeURIComponent(version);
+      var source = './' + sourceName + '?v=' + encodeURIComponent(version);
       loadingVersion = version;
 
       if (outputType === 'mp4') {
-        const nextMedia = document.createElement('video');
+        var nextMedia = document.createElement('video');
+        var swapped = false;
         nextMedia.autoplay = true;
         nextMedia.muted = true;
         nextMedia.loop = true;
         nextMedia.playsInline = true;
-        nextMedia.controls = true;
+        nextMedia.controls = false;
         nextMedia.preload = 'auto';
+        nextMedia.setAttribute('playsinline', '');
+        nextMedia.style.display = 'none';
         nextMedia.src = source;
-        nextMedia.addEventListener('canplay', () => {
+        var swapWhenReady = function () {
+          if (swapped) return;
+          swapped = true;
           if (loadingVersion !== version) return;
-          media.replaceWith(nextMedia);
+          nextMedia.style.display = '';
+          if (media.replaceWith) media.replaceWith(nextMedia);
+          else media.parentNode.replaceChild(nextMedia, media);
           media = nextMedia;
           currentVersion = version;
-          nextMedia.play().catch(() => { });
-        }, { once: true });
-        nextMedia.addEventListener('error', () => {
+          try {
+            var playback = nextMedia.play();
+            if (playback && playback.catch) playback.catch(function () { });
+          } catch (error) { }
+        };
+        nextMedia.addEventListener('loadeddata', swapWhenReady, false);
+        nextMedia.addEventListener('canplay', swapWhenReady, false);
+        nextMedia.addEventListener('error', function () {
           if (loadingVersion === version) loadingVersion = null;
-        }, { once: true });
+        }, false);
+        document.body.appendChild(nextMedia);
         nextMedia.load();
       } else {
-        const nextMedia = new Image();
-        nextMedia.onload = () => {
+        var nextImage = new Image();
+        nextImage.onload = function () {
           if (loadingVersion !== version) return;
           media.src = source;
           currentVersion = version;
         };
-        nextMedia.onerror = () => {
+        nextImage.onerror = function () {
           if (loadingVersion === version) loadingVersion = null;
         };
-        nextMedia.src = source;
+        nextImage.src = source;
       }
     }
 
-    async function checkForUpdate() {
-      try {
-        const response = await fetch('./' + versionName + '?check=' + Date.now(), { cache: 'no-store' });
-        if (!response.ok) return;
-        const version = (await response.text()).trim();
-        if (!version || version === currentVersion || version === loadingVersion) return;
-        preloadMedia(version);
-      } catch {
-        // The next poll will retry if Home Assistant is temporarily unavailable.
+    function handleVersion(version) {
+      version = String(version).replace(/^\s+|\s+$/g, '');
+      if (!version || version === currentVersion || version === loadingVersion) return;
+      preloadMedia(version);
+    }
+
+    function checkForUpdate() {
+      var request = new XMLHttpRequest();
+      request.open('GET', './' + versionName + '?check=' + new Date().getTime(), true);
+      request.onreadystatechange = function () {
+        if (request.readyState !== 4) return;
+        if (request.status >= 200 && request.status < 300) handleVersion(request.responseText);
       }
+      request.send(null);
     }
 
     checkForUpdate();
