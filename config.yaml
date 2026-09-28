@@ -1,0 +1,38 @@
+name: "HA Dashboard Extractor"
+description: "Pre-renders Home Assistant dashboards to animated WebP or MP4 videos, optimized for slow tablets."
+version: "0.0.1"
+slug: "ha_extractor"
+url: "https://github.com/MelchMwoan/ha-extractor-app"
+image: "ghcr.io/MelchMwoan/ha-extractor-app"
+init: false
+arch:
+  - amd64
+  - aarch64
+map:
+  - config:rw
+options:
+  url: "http://homeassistant:8123/lovelace?kiosk"
+  token: ""
+  width: 360
+  height: 640
+  zoom: 1
+  duration: 30
+  wait_until_loaded: true
+  delay_after_loaded: 2
+  cron: "*/30 * * * *"
+  output_type: "webp"
+  framerate: 30
+  output_path: "/config/www/ha-extractor/output"
+schema:
+  url: str
+  token: str?
+  width: int
+  height: int
+  zoom: float
+  duration: int
+  wait_until_loaded: bool
+  delay_after_loaded: int
+  cron: str
+  output_type: list(webp|mp4)
+  framerate: int
+  output_path: str

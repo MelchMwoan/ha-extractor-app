@@ -1,0 +1,37 @@
+configuration:
+  url:
+    name: URL
+    description: URL van het Home Assistant dashboard om vast te leggen. Het is aangeraden om de kiosk versie te gebruiken.
+  token:
+    name: Token
+    description: Toegangstoken voor Home Assistant (optioneel). Als het niet wordt geleverd, zal de app proberen de token van de add-on te gebruiken.
+  width:
+    name: Breedte
+    description: Breedte van de browser in pixels.
+  height:
+    name: Hoogte
+    description: Hoogte van de browser in pixels.
+  zoom:
+    name: Zoom
+    description: Zoom niveau van de browser.
+  duration:
+    name: Duur
+    description: Voor hoeveel seconden het dashboard opgenomen moet worden.
+  wait_until_loaded:
+    name: Wachten tot HA geladen is
+    description: Wacht tot Home Assistant volledig geladen is voordat de opname start, zodat het laadscherm niet wordt opgenomen.
+  delay_after_loaded:
+    name: Vertraging na laden van HA
+    description: Extra vertraging in seconden nadat Home Assistant geladen is, zodat het laadscherm kan verdwijnen.
+  cron:
+    name: Cron
+    description: Cron expression om de vastlegging in te plannen.
+  output_type:
+    name: Output Type
+    description: Type van het output bestand. De ondersteunde types zijn momenteel 'webp' en 'mp4'.
+  framerate:
+    name: Framerate
+    description: Framerate van de output video.
+  output_path:
+    name: Output Pad
+    description: Pad waar het output bestand opgeslagen wordt.

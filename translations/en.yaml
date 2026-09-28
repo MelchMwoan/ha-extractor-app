@@ -1,0 +1,37 @@
+configuration:
+  url:
+    name: URL
+    description: URL of the Home Assistant Lovelace dashboard to capture. Use the kiosk version if available.
+  token:
+    name: Token
+    description: Access token for Home Assistant (optional). If not provided, the app will try to use the add-on's token.
+  width:
+    name: Width
+    description: Width of the captured dashboard in pixels.
+  height:
+    name: Height
+    description: Height of the captured dashboard in pixels.
+  zoom:
+    name: Zoom
+    description: Zoom level for the dashboard.
+  duration:
+    name: Duration
+    description: Duration of the capture in seconds.
+  wait_until_loaded:
+    name: Wait until HA loaded
+    description: Wait for Home Assistant to finish loading before recording, preventing the loading screen from being captured.
+  delay_after_loaded:
+    name: Delay after HA loaded
+    description: Additional delay in seconds after Home Assistant loads, allowing the dashboard splash screen to disappear.
+  cron:
+    name: Cron
+    description: Cron expression to schedule the capture.
+  output_type:
+    name: Output Type
+    description: Type of the output file. Current supported types are 'webp' and 'mp4'.
+  framerate:
+    name: Framerate
+    description: Framerate of the output file.
+  output_path:
+    name: Output Path
+    description: Path to the output file.

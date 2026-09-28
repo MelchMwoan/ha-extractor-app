@@ -1,0 +1,7 @@
+node_modules
+temp_videos
+output.webp
+output.mp4
+.env
+.git
+.gitignore

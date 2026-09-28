@@ -1,0 +1,20 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the image to GHCR
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      app: "."
+      publish: ${{ github.event_name == 'push' || inputs.publish == true }}
+    secrets: inherit

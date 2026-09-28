@@ -1,0 +1,14 @@
+{
+  "name": "ha-extractor-app",
+  "description": "Pre-renders HA dashboards to video/webp",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "playwright": "1.42.1",
+    "node-cron": "3.0.3",
+    "dotenv": "16.4.5"
+  }
+}

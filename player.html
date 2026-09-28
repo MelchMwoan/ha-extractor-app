@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HA Extractor</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    video,
+    img {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+    }
+  </style>
+</head>
+
+<body>
+  <video id="video" autoplay muted loop playsinline hidden>
+    <source id="video-source" type="video/mp4">
+    Your browser does not support video playback.
+  </video>
+  <img id="image" alt="Home Assistant dashboard" hidden>
+
+  <script>
+    const outputType = __OUTPUT_TYPE__;
+    const sourceName = __SOURCE_NAME__;
+    const versionName = __VERSION_NAME__;
+    let media = document.getElementById(outputType === 'mp4' ? 'video' : 'image');
+    let currentVersion = null;
+    let loadingVersion = null;
+
+    media.hidden = false;
+
+    function preloadMedia(version) {
+      const source = './' + sourceName + '?v=' + encodeURIComponent(version);
+      loadingVersion = version;
+
+      if (outputType === 'mp4') {
+        const nextMedia = document.createElement('video');
+        nextMedia.autoplay = true;
+        nextMedia.muted = true;
+        nextMedia.loop = true;
+        nextMedia.playsInline = true;
+        nextMedia.controls = true;
+        nextMedia.preload = 'auto';
+        nextMedia.src = source;
+        nextMedia.addEventListener('canplay', () => {
+          if (loadingVersion !== version) return;
+          media.replaceWith(nextMedia);
+          media = nextMedia;
+          currentVersion = version;
+          nextMedia.play().catch(() => { });
+        }, { once: true });
+        nextMedia.addEventListener('error', () => {
+          if (loadingVersion === version) loadingVersion = null;
+        }, { once: true });
+        nextMedia.load();
+      } else {
+        const nextMedia = new Image();
+        nextMedia.onload = () => {
+          if (loadingVersion !== version) return;
+          media.src = source;
+          currentVersion = version;
+        };
+        nextMedia.onerror = () => {
+          if (loadingVersion === version) loadingVersion = null;
+        };
+        nextMedia.src = source;
+      }
+    }
+
+    async function checkForUpdate() {
+      try {
+        const response = await fetch('./' + versionName + '?check=' + Date.now(), { cache: 'no-store' });
+        if (!response.ok) return;
+        const version = (await response.text()).trim();
+        if (!version || version === currentVersion || version === loadingVersion) return;
+        preloadMedia(version);
+      } catch {
+        // The next poll will retry if Home Assistant is temporarily unavailable.
+      }
+    }
+
+    checkForUpdate();
+    setInterval(checkForUpdate, 10000);
+  </script>
+</body>
+
+</html>
