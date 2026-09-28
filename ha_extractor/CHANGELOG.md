@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.4] - 2026-09-28
+
+### Added
+- Added an option to change the mp4 encoding preset
+- Added an option to reduce the mp4 quality
+- Added an option to change the mp4 encoder threads
+
+### Fixed
+- Fixed the auto-release-notes gitflow
+
 ## [0.0.3] - 2026-09-28
 
 ### Added

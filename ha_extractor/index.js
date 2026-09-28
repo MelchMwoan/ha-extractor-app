@@ -74,6 +74,7 @@ const config = {
   width: positiveNumber(value('width', 'RESOLUTION_WIDTH', 360), 'width', { integer: true }),
   height: positiveNumber(value('height', 'RESOLUTION_HEIGHT', 640), 'height', { integer: true }),
   zoom: positiveNumber(value('zoom', 'ZOOM_LEVEL', 0.75), 'zoom'),
+  screencastQuality: positiveNumber(value('screencast_quality', 'SCREENCAST_QUALITY', 60), 'screencast_quality', { integer: true }),
   durationMs: positiveNumber(value('duration', 'CAPTURE_DURATION_SECONDS', 30), 'duration', { integer: true }) * 1000,
   waitUntilLoaded: booleanValue(value('wait_until_loaded', 'WAIT_UNTIL_LOADED', true), 'wait_until_loaded'),
   delayAfterLoadedMs: nonNegativeNumber(value('delay_after_loaded', 'DELAY_AFTER_LOADED_SECONDS', 2), 'delay_after_loaded', { integer: true }) * 1000,
@@ -81,11 +82,16 @@ const config = {
   profileCacheClearIntervalMs: nonNegativeNumber(value('profile_cache_clear_interval', 'PROFILE_CACHE_CLEAR_INTERVAL_MINUTES', 15), 'profile_cache_clear_interval', { integer: true }) * 60 * 1000,
   cronSchedule: String(value('cron', 'CRON_SCHEDULE', '*/30 * * * *')),
   outputType: String(value('output_type', 'OUTPUT_TYPE', 'mp4')).toLowerCase(),
-  framerate: positiveNumber(value('framerate', 'FRAMERATE', 25), 'framerate', { integer: true }),
+  mp4Preset: String(value('mp4_preset', 'MP4_PRESET', 'veryfast')).toLowerCase(),
+  framerate: positiveNumber(value('framerate', 'FRAMERATE', 15), 'framerate', { integer: true }),
+  encoderThreads: positiveNumber(value('encoder_threads', 'ENCODER_THREADS', 1), 'encoder_threads', { integer: true }),
   outputPathBase: String(value('output_path', 'OUTPUT_PATH', '/config/www/ha-extractor/output')),
 };
 
 if (!['webp', 'mp4'].includes(config.outputType)) throw new Error(`output_type must be "webp" or "mp4", got "${config.outputType}"`);
+const mp4Presets = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
+if (!mp4Presets.includes(config.mp4Preset)) throw new Error(`mp4_preset must be one of ${mp4Presets.join(', ')}, got "${config.mp4Preset}"`);
+if (config.screencastQuality > 100) throw new Error(`screencast_quality must be between 1 and 100, got ${config.screencastQuality}`);
 if (!cron.validate(config.cronSchedule)) throw new Error(`Invalid cron schedule: ${config.cronSchedule}`);
 try { new URL(config.url); } catch { throw new Error(`Invalid HA_URL: ${config.url}`); }
 
@@ -184,7 +190,6 @@ async function getCaptureContext() {
   const browser = await getBrowser();
   const context = await browser.newContext({
     viewport: { width: config.width, height: config.height },
-    recordVideo: { dir: tempDir, size: { width: config.width, height: config.height } },
   });
   await addAuthScript(context);
   return context;
@@ -236,10 +241,11 @@ async function preparePage(page) {
   if (config.retainProfile) retainedPageReady = true;
 }
 
-async function captureRetainedVideo(page, captureId) {
+async function captureVideo(page, captureId) {
   const videoPath = path.join(tempDir, `capture-${captureId}.webm`);
   await page.screencast.start({
     path: videoPath,
+    quality: config.screencastQuality,
     size: { width: config.width, height: config.height },
   });
   try {
@@ -278,14 +284,11 @@ async function captureDashboard() {
     await clearProfileCacheIfDue(context, page);
     await preparePage(page);
     log.info(`Recording capture #${captureId} for ${config.durationMs / 1000} seconds`);
-    captureSource = config.retainProfile
-      ? await captureRetainedVideo(page, captureId)
-      : await (async () => {
-        await page.waitForTimeout(config.durationMs);
-        await context.close();
-        context = undefined;
-        return { type: 'video', path: await page.video().path() };
-      })();
+    captureSource = await captureVideo(page, captureId);
+    if (!config.retainProfile) {
+      await context.close();
+      context = undefined;
+    }
 
     if (config.retainProfile) log.info(`Retained page capture #${captureId} finished; encoding queued`);
     else log.info(`Capture #${captureId} finished; encoding queued`);
@@ -339,8 +342,8 @@ function transcodeVideo(captureSource, outputPath) {
   const durationSeconds = String(config.durationMs / 1000);
   const input = ['-sseof', `-${durationSeconds}`, '-i', captureSource.path, '-t', durationSeconds];
   const args = config.outputType === 'mp4'
-    ? ['-y', ...input, '-vf', filters, '-c:v', 'libx264', '-threads', '2', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', outputPath]
-    : ['-y', ...input, '-vf', filters, '-c:v', 'libwebp', '-threads', '2', '-lossless', '0', '-compression_level', '0', '-q:v', '50', '-loop', '0', '-an', outputPath];
+    ? ['-y', ...input, '-vf', filters, '-c:v', 'libx264', '-threads', String(config.encoderThreads), '-preset', config.mp4Preset, '-crf', '22', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', outputPath]
+    : ['-y', ...input, '-vf', filters, '-c:v', 'libwebp', '-threads', String(config.encoderThreads), '-lossless', '0', '-compression_level', '0', '-q:v', '50', '-loop', '0', '-an', outputPath];
 
   return new Promise((resolve, reject) => {
     const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -365,7 +368,7 @@ process.once('SIGTERM', () => void shutdown('SIGTERM'));
 process.once('SIGINT', () => void shutdown('SIGINT'));
 
 log.info('HA Extractor started');
-log.info(`Settings: ${config.width}x${config.height}, zoom=${config.zoom}, duration=${config.durationMs / 1000}s, waitUntilLoaded=${config.waitUntilLoaded}, delayAfterLoaded=${config.delayAfterLoadedMs / 1000}s, retainProfile=${config.retainProfile}, profileCacheClearInterval=${config.profileCacheClearIntervalMs / 60000}m, ${config.framerate}fps ${config.outputType}`);
+log.info(`Settings: ${config.width}x${config.height}, zoom=${config.zoom}, screencastQuality=${config.screencastQuality}, duration=${config.durationMs / 1000}s, waitUntilLoaded=${config.waitUntilLoaded}, delayAfterLoaded=${config.delayAfterLoadedMs / 1000}s, retainProfile=${config.retainProfile}, profileCacheClearInterval=${config.profileCacheClearIntervalMs / 60000}m, ${config.framerate}fps ${config.outputType}, mp4Preset=${config.mp4Preset}, encoderThreads=${config.encoderThreads}`);
 log.info(`Settings: url=${config.url}, output=${config.outputPathBase}${config.outputType === 'mp4' ? '.mp4' : '.webp'}, schedule=${config.cronSchedule}`);
 
 void captureDashboard();

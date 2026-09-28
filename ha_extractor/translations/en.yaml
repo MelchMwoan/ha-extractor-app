@@ -14,6 +14,9 @@ configuration:
   zoom:
     name: Zoom
     description: Zoom level for the dashboard.
+  screencast_quality:
+    name: Screencast quality
+    description: JPEG quality used while capturing. Lower values reduce CPU usage and temporary file size.
   duration:
     name: Duration
     description: Duration of the capture in seconds.
@@ -35,9 +38,15 @@ configuration:
   output_type:
     name: Output Type
     description: Type of the output file. Current supported types are 'webp' and 'mp4'.
+  mp4_preset:
+    name: MP4 encoding preset
+    description: FFmpeg x264 preset. Faster presets reduce CPU usage but produce larger files.
   framerate:
     name: Framerate
     description: Framerate of the output file.
+  encoder_threads:
+    name: Encoder threads
+    description: Maximum number of FFmpeg encoder threads. One reduces CPU usage; higher values encode faster.
   output_path:
     name: Output Path
     description: Path to the output file.

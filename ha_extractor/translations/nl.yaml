@@ -14,6 +14,9 @@ configuration:
   zoom:
     name: Zoom
     description: Zoom niveau van de browser.
+  screencast_quality:
+    name: Screencastkwaliteit
+    description: JPEG-kwaliteit tijdens het opnemen. Lagere waarden verlagen CPU-gebruik en tijdelijke bestandsgrootte.
   duration:
     name: Duur
     description: Voor hoeveel seconden het dashboard opgenomen moet worden.
@@ -35,9 +38,15 @@ configuration:
   output_type:
     name: Output Type
     description: Type van het output bestand. De ondersteunde types zijn momenteel 'webp' en 'mp4'.
+  mp4_preset:
+    name: MP4-encoderpreset
+    description: FFmpeg x264-preset. Snellere presets verlagen het CPU-gebruik maar maken grotere bestanden.
   framerate:
     name: Framerate
     description: Framerate van de output video.
+  encoder_threads:
+    name: Encoder threads
+    description: Maximum aantal FFmpeg-threads. Eén thread verlaagt het CPU-gebruik; hogere waarden coderen sneller.
   output_path:
     name: Output Pad
     description: Pad waar het output bestand opgeslagen wordt.
