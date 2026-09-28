@@ -9,12 +9,10 @@ RUN apk add --no-cache nodejs npm
 
 WORKDIR /build
 COPY package*.json ./
-RUN npm install --omit=dev \
+RUN npm install --omit=dev --no-audit --no-fund --no-progress \
   && npx playwright install ffmpeg
 
 FROM ${BUILD_FROM}
-
-ARG TARGETARCH
 
 LABEL \
   org.opencontainers.image.title="Home Assistant App: HA Extractor" \
@@ -30,14 +28,16 @@ RUN \
     ca-certificates \
     chromium-headless-shell \
     ffmpeg \
-    nodejs
+    nodejs \
+  && rm -f /usr/lib/libLLVM.so.* /usr/lib/libgallium-*.so* \
+  && rm -rf /usr/lib/dri
 
 WORKDIR /app
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/package.json ./package.json
 COPY --from=builder /ms-playwright /ms-playwright
 
-COPY . /app/
+COPY index.js player.html ./
 COPY rootfs /
 RUN chmod +x /etc/services.d/ha-extractor/run \
   && mkdir -p /config/www/ha-extractor

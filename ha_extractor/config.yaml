@@ -1,6 +1,6 @@
 name: "HA Dashboard Extractor"
 description: "Pre-renders Home Assistant dashboards to animated WebP or MP4 videos, optimized for slow tablets."
-version: "0.0.2"
+version: "0.0.3"
 slug: "ha_extractor"
 url: "https://github.com/MelchMwoan/ha-extractor-app"
 image: "ghcr.io/melchmwoan/ha-extractor-app"

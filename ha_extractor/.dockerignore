@@ -5,3 +5,9 @@ output.mp4
 .env
 .git
 .gitignore
+*.webm
+*.webp
+*.mp4
+*.tmp
+chromium-profile
+README.md

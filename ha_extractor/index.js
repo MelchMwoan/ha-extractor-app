@@ -100,6 +100,8 @@ let stopping = false;
 let scheduledTask;
 let sharedBrowser;
 let sharedPersistentContext;
+let sharedPersistentPage;
+let retainedPageReady = false;
 let profileCacheLastClearedAt = 0;
 const profileDir = path.resolve(process.env.CHROMIUM_PROFILE_DIR || '/data/chromium-profile');
 
@@ -130,7 +132,7 @@ async function getBrowser() {
   sharedBrowser = await chromium.launch({
     headless: true,
     executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
   });
   sharedBrowser.once('disconnected', () => {
     log.warn('Chromium disconnected; it will be relaunched for the next capture');
@@ -146,6 +148,8 @@ async function closeSharedBrowser() {
 
   const persistentContext = sharedPersistentContext;
   sharedPersistentContext = undefined;
+  sharedPersistentPage = undefined;
+  retainedPageReady = false;
   if (persistentContext) await persistentContext.close().catch((error) => log.warn(`Could not close retained profile cleanly: ${error.message}`));
 }
 
@@ -168,9 +172,8 @@ async function getCaptureContext() {
       sharedPersistentContext = await chromium.launchPersistentContext(profileDir, {
         headless: true,
         executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-dev-shm-usage'],
+        args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
         viewport: { width: config.width, height: config.height },
-        recordVideo: { dir: tempDir, size: { width: config.width, height: config.height } },
       });
       await addAuthScript(sharedPersistentContext);
       profileCacheLastClearedAt = Date.now();
@@ -198,6 +201,55 @@ async function clearProfileCacheIfDue(context, page) {
   log.info('Cleared retained Chromium HTTP cache');
 }
 
+async function getRetainedPage(context) {
+  if (sharedPersistentPage && !sharedPersistentPage.isClosed()) return sharedPersistentPage;
+  sharedPersistentPage = await context.newPage();
+  retainedPageReady = false;
+  return sharedPersistentPage;
+}
+
+async function preparePage(page) {
+  if (config.retainProfile && retainedPageReady && page.url() === config.url) {
+    log.info('Reusing the retained Home Assistant page; navigation skipped');
+    return;
+  }
+
+  log.info(`Navigating to ${config.url}`);
+  await page.goto(config.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  if (config.waitUntilLoaded) {
+    log.info('Waiting for Home Assistant data');
+    await page.waitForFunction(() => {
+      const app = document.querySelector('home-assistant');
+      const hass = app?.hass;
+      return Boolean(hass?.connection?.connected && hass.states && Object.keys(hass.states).length > 0);
+    }, undefined, { timeout: 60_000 });
+    if (config.delayAfterLoadedMs > 0) {
+      log.info(`Waiting ${config.delayAfterLoadedMs / 1000} seconds after Home Assistant loaded`);
+      await page.waitForTimeout(config.delayAfterLoadedMs);
+    }
+    log.info('Home Assistant data ready; starting recording');
+  } else {
+    log.info('Skipping Home Assistant readiness wait');
+  }
+
+  await page.evaluate((zoom) => { document.body.style.zoom = String(zoom); }, config.zoom);
+  if (config.retainProfile) retainedPageReady = true;
+}
+
+async function captureRetainedVideo(page, captureId) {
+  const videoPath = path.join(tempDir, `capture-${captureId}.webm`);
+  await page.screencast.start({
+    path: videoPath,
+    size: { width: config.width, height: config.height },
+  });
+  try {
+    await page.waitForTimeout(config.durationMs);
+  } finally {
+    await page.screencast.stop();
+  }
+  return { type: 'video', path: videoPath };
+}
+
 async function captureDashboard() {
   if (captureRunning || stopping) {
     log.warn('Capture skipped because another recording is active or shutdown is in progress.');
@@ -208,7 +260,7 @@ async function captureDashboard() {
   const captureId = ++captureSequence;
   let context;
   let page;
-  let videoPath;
+  let captureSource;
   const extension = config.outputType === 'mp4' ? '.mp4' : '.webp';
   const finalOutputPath = `${config.outputPathBase}${extension}`;
 
@@ -220,49 +272,47 @@ async function captureDashboard() {
 
     context = await getCaptureContext();
 
-    page = await context.newPage();
+    page = config.retainProfile
+      ? await getRetainedPage(context)
+      : await context.newPage();
     await clearProfileCacheIfDue(context, page);
-    log.info(`Navigating to ${config.url}`);
-    await page.goto(config.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    if (config.waitUntilLoaded) {
-      log.info('Waiting for Home Assistant data');
-      await page.waitForFunction(() => {
-        const app = document.querySelector('home-assistant');
-        const hass = app?.hass;
-        return Boolean(hass?.connection?.connected && hass.states && Object.keys(hass.states).length > 0);
-      }, undefined, { timeout: 60_000 });
-      if (config.delayAfterLoadedMs > 0) {
-        log.info(`Waiting ${config.delayAfterLoadedMs / 1000} seconds after Home Assistant loaded`);
-        await page.waitForTimeout(config.delayAfterLoadedMs);
-      }
-      log.info('Home Assistant data ready; starting recording');
-    } else {
-      log.info('Skipping Home Assistant readiness wait');
-    }
-    await page.evaluate((zoom) => { document.body.style.zoom = String(zoom); }, config.zoom);
+    await preparePage(page);
     log.info(`Recording capture #${captureId} for ${config.durationMs / 1000} seconds`);
-    await page.waitForTimeout(config.durationMs);
+    captureSource = config.retainProfile
+      ? await captureRetainedVideo(page, captureId)
+      : await (async () => {
+        await page.waitForTimeout(config.durationMs);
+        await context.close();
+        context = undefined;
+        return { type: 'video', path: await page.video().path() };
+      })();
 
-    if (config.retainProfile) await page.close();
-    else await context.close();
-    videoPath = await page.video().path();
-    if (!config.retainProfile) context = undefined;
-
-    const completedVideoPath = videoPath;
-    videoPath = undefined;
-    log.info(`Capture #${captureId} finished; encoding queued`);
-    enqueueEncoding(completedVideoPath, finalOutputPath, extension, captureId);
+    if (config.retainProfile) log.info(`Retained page capture #${captureId} finished; encoding queued`);
+    else log.info(`Capture #${captureId} finished; encoding queued`);
+    const completedCapture = captureSource;
+    captureSource = undefined;
+    enqueueEncoding(completedCapture, finalOutputPath, extension, captureId);
   } catch (error) {
     log.err(`Capture #${captureId} failed: ${error.message}`);
+    if (config.retainProfile) {
+      sharedPersistentPage = undefined;
+      retainedPageReady = false;
+      await page?.close().catch(() => { });
+    }
   } finally {
-    if (page && !page.isClosed()) await page.close().catch(() => { });
+    if (page && !config.retainProfile && !page.isClosed()) await page.close().catch(() => { });
     if (context && context !== sharedPersistentContext) await context.close().catch(() => { });
-    if (videoPath) await fsp.rm(videoPath, { force: true }).catch(() => { });
+    if (captureSource) await removeCaptureSource(captureSource);
     captureRunning = false;
   }
 }
 
-function enqueueEncoding(videoPath, finalOutputPath, extension, captureId) {
+async function removeCaptureSource(captureSource) {
+  if (!captureSource) return;
+  await fsp.rm(captureSource.path, { force: true }).catch(() => { });
+}
+
+function enqueueEncoding(captureSource, finalOutputPath, extension, captureId) {
   const encodingId = ++encodeSequence;
   pendingEncodes += 1;
   encodeQueue = encodeQueue.then(async () => {
@@ -270,24 +320,24 @@ function enqueueEncoding(videoPath, finalOutputPath, extension, captureId) {
     const encodingStartedAt = Date.now();
     try {
       log.info(`Encoding capture #${captureId} as ${finalOutputPath}`);
-      await transcodeVideo(videoPath, temporaryOutputPath);
+      await transcodeVideo(captureSource, temporaryOutputPath);
       await fsp.rename(temporaryOutputPath, finalOutputPath);
       await writeOutputVersion(finalOutputPath);
       log.info(`Capture #${captureId} complete; encoding took ${((Date.now() - encodingStartedAt) / 1000).toFixed(1)} seconds`);
     } catch (error) {
       log.err(`Encoding capture #${captureId} failed: ${error.message}`);
     } finally {
-      await fsp.rm(videoPath, { force: true }).catch(() => { });
+      await removeCaptureSource(captureSource);
       await fsp.rm(temporaryOutputPath, { force: true }).catch(() => { });
       pendingEncodes -= 1;
     }
   });
 }
 
-function transcodeVideo(inputPath, outputPath) {
+function transcodeVideo(captureSource, outputPath) {
   const filters = `fps=${config.framerate}`;
   const durationSeconds = String(config.durationMs / 1000);
-  const input = ['-sseof', `-${durationSeconds}`, '-i', inputPath, '-t', durationSeconds];
+  const input = ['-sseof', `-${durationSeconds}`, '-i', captureSource.path, '-t', durationSeconds];
   const args = config.outputType === 'mp4'
     ? ['-y', ...input, '-vf', filters, '-c:v', 'libx264', '-threads', '2', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', outputPath]
     : ['-y', ...input, '-vf', filters, '-c:v', 'libwebp', '-threads', '2', '-lossless', '0', '-compression_level', '0', '-q:v', '50', '-loop', '0', '-an', outputPath];
