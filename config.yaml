@@ -3,7 +3,7 @@ description: "Pre-renders Home Assistant dashboards to animated WebP or MP4 vide
 version: "0.0.1"
 slug: "ha_extractor"
 url: "https://github.com/MelchMwoan/ha-extractor-app"
-image: "ghcr.io/MelchMwoan/ha-extractor-app"
+image: "ghcr.io/melchmwoan/ha-extractor-app"
 init: false
 arch:
   - amd64
