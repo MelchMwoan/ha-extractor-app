@@ -11,6 +11,11 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
 jobs:
   build:
     uses: ./.github/workflows/build-app.yaml
